@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "test:db": "supabase test db supabase/tests/01_profiles.test.sql",
+    "test:db": "supabase test db supabase/tests/01_profiles.test.sql supabase/tests/02_posts.test.sql",
     "e2e": "playwright test"
   },
   "dependencies": {
