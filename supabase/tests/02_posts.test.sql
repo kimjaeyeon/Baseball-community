@@ -1,6 +1,6 @@
 begin;
 \ir _helpers.sql
-select plan(30);
+select plan(34);
 
 create temporary table post_users (label text, id uuid);
 insert into post_users values ('A', tests.create_user('글쓴이A')), ('B', tests.create_user('글쓴이B'));
@@ -44,16 +44,30 @@ select lives_ok($$update public.posts set title='수정한 글' where kind='text
 select tests.login_as((select id from post_users where label='B'));
 with changed as (update public.posts set title='남의 글 수정' returning id)
 select is((select count(*) from changed),0::bigint,'남의 글 수정은 0행');
-select throws_ok($$select public.soft_delete_post((select id from public.posts where kind='text'))$$, '42501', null, '남의 글 삭제 거부');
+select throws_ok($$select public.soft_delete_post((select id from public.posts where kind='text' and author_id=(select id from post_users where label='A')))$$, '42501', null, '남의 글 삭제 거부');
 select tests.login_as((select id from post_users where label='A'));
-select lives_ok($$select public.soft_delete_post((select id from public.posts where kind='text'))$$, '본인 삭제 허용');
+select lives_ok($$select public.soft_delete_post((select id from public.posts where kind='text' and author_id=(select id from post_users where label='A')))$$, '본인 삭제 허용');
 select tests.logout();
-select is((select count(*) from public.posts where kind='text'),0::bigint,'삭제 글 비회원에게 숨김');
-select is((select count(*) from public.posts where kind='link'),1::bigint,'비회원 읽기 허용');
+select is((select count(*) from public.posts where kind='text' and author_id=(select id from post_users where label='A')),0::bigint,'삭제 글 비회원에게 숨김');
+select is((select count(*) from public.posts where kind='link' and author_id=(select id from post_users where label='A')),1::bigint,'비회원 읽기 허용');
 select throws_ok($$insert into public.posts(board_id,author_id,kind,title,body)
  values(1,(select id from post_users where label='A'),'text','비회원 글','본문')$$, '42501', null, '비회원 작성 거부');
 select throws_ok($$insert into public.boards values(4,'new','새 게시판',4)$$, '42501', null, '게시판 작성 거부');
 reset role;
-select is((select count(*) from public.posts where deleted_at is not null),1::bigint,'소프트 삭제 행 보존');
+select is((select count(*) from public.posts where deleted_at is not null and author_id=(select id from post_users where label='A')),1::bigint,'소프트 삭제 행 보존');
+
+insert into public.posts(board_id,author_id,kind,title,body,created_at)
+ select 3,(select id from post_users where label='A'),'text','동시 글 ' || n,'본문','2026-11-14T00:00:00.123456Z'
+ from generate_series(1,25) n;
+select tests.logout();
+create temporary table page_one as select id,created_at from public.posts where board_id=3 and author_id=(select id from post_users where label='A')
+ order by created_at desc,id desc limit 20;
+create temporary table page_two as select id,created_at from public.posts where board_id=3 and author_id=(select id from post_users where label='A')
+ and (created_at,id) < (select created_at,id from page_one order by created_at,id limit 1)
+ order by created_at desc,id desc limit 20;
+select is((select count(*) from page_one),20::bigint,'첫 페이지 20개');
+select is((select count(*) from page_two),5::bigint,'같은 시각 다음 페이지 5개');
+select is((select count(*) from (select id from page_one union all select id from page_two) p),25::bigint,'누락 없이 25개');
+select is((select count(*) from page_one join page_two using(id)),0::bigint,'페이지 사이 중복 0개');
 select * from finish();
 rollback;
