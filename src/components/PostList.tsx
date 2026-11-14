@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { listPosts, type PostListItem } from "@/lib/posts";
+import type { PostListItem } from "@/lib/posts";
+import { loadMorePosts } from "@/app/actions";
 import PostRow from "./PostRow";
 
 export default function PostList({ initial, board, best, emptyMessage = "아직 글이 없어요" }: {
@@ -15,7 +16,7 @@ export default function PostList({ initial, board, best, emptyMessage = "아직 
     if (!cursor || pending) return;
     startTransition(async () => {
       try {
-        const next = await listPosts({ board, best, cursor });
+        const next = await loadMorePosts({ board, best, cursor });
         setItems((previous) => [...previous, ...next.items.filter((p) => !previous.some((old) => old.id === p.id))]);
         setCursor(next.nextCursor);
         setError("");
