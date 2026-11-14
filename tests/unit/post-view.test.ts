@@ -1,0 +1,43 @@
+import { renderToStaticMarkup } from "react-dom/server";
+import { beforeEach, expect, it, vi } from "vitest";
+
+const { getPost, rpc, from, getUser, getCookie } = vi.hoisted(() => ({ getPost: vi.fn(), rpc: vi.fn(), from: vi.fn(), getUser: vi.fn(), getCookie: vi.fn() }));
+vi.mock("@/lib/posts", () => ({ getPost }));
+vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ rpc, from, auth: { getUser } }) }));
+vi.mock("next/headers", () => ({ cookies: async () => ({ get: getCookie }) }));
+vi.mock("next/navigation", () => ({ notFound: () => { throw new Error("NOT_FOUND"); } }));
+import PostPage from "../../src/app/[board]/[id]/page";
+
+beforeEach(() => {
+  vi.resetAllMocks();
+  getPost.mockResolvedValue({ id: 7, board: { slug: "kbo", name: "KBO" }, author: { nickname: "작성자" }, author_id: "a", title: "테스트 글", body: "본문", kind: "text", like_count: 0, view_count: 42, created_at: "2026-11-14T01:00:00Z" });
+  getUser.mockResolvedValue({ data: { user: null }, error: null });
+  getCookie.mockReturnValue({ value: "guest-key" });
+  rpc.mockResolvedValue({ error: null });
+  from.mockImplementation((table: string) => {
+    const query = {
+      select: () => query, eq: () => query, order: () => query,
+      maybeSingle: async () => ({ data: { view_count: 43 }, error: null }),
+      then: (resolve: (result: unknown) => unknown) => Promise.resolve(resolve({ data: table === "posts" ? { view_count: 43 } : [], error: null })),
+    };
+    return query;
+  });
+});
+
+it("counts with the visitor cookie and displays the fresh counter in the same render", async () => {
+  const html = renderToStaticMarkup(await PostPage({ params: Promise.resolve({ board: "kbo", id: "7" }) } as never));
+  expect(rpc).toHaveBeenCalledWith("increment_view", { p_post_id: 7, p_viewer_key: "guest-key" });
+  expect(html).toContain("조회 43");
+});
+
+it("does not count an invalid board or missing post", async () => {
+  await expect(PostPage({ params: Promise.resolve({ board: "mlb", id: "7" }) } as never)).rejects.toThrow("NOT_FOUND");
+  getPost.mockResolvedValue(null);
+  await expect(PostPage({ params: Promise.resolve({ board: "kbo", id: "7" }) } as never)).rejects.toThrow("NOT_FOUND");
+  expect(rpc).not.toHaveBeenCalled();
+});
+
+it("does not silently ignore a failed view RPC", async () => {
+  rpc.mockResolvedValue({ error: { message: "offline" } });
+  await expect(PostPage({ params: Promise.resolve({ board: "kbo", id: "7" }) } as never)).rejects.toThrow();
+});
