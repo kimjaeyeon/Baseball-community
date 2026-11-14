@@ -1,0 +1,88 @@
+begin;
+\ir _helpers.sql
+select plan(40);
+create temporary table vn_users(label text, id uuid);
+insert into vn_users values ('A',tests.create_user('알림작성자')),('B',tests.create_user('알림댓글자')),('C',tests.create_user('알림답글자'));
+create temporary table vn_posts(label text, id bigint);
+with p as (insert into public.posts(board_id,author_id,kind,title,body) select 1,id,'text','조회 알림 테스트','본문' from vn_users where label='A' returning id)
+insert into vn_posts select 'live',id from p;
+with p as (insert into public.posts(board_id,author_id,kind,title,body,deleted_at) select 1,id,'text','삭제 테스트','본문',now() from vn_users where label='A' returning id)
+insert into vn_posts select 'deleted',id from p;
+create temporary table vn_comments(label text,id bigint);
+grant select on vn_users,vn_posts to anon,authenticated;
+grant select,insert on vn_comments to authenticated;
+alter table public.posts disable trigger posts_touch_updated_at;
+update public.posts set updated_at='2000-01-01' where id=(select id from vn_posts where label='live');
+alter table public.posts enable trigger posts_touch_updated_at;
+
+select tests.logout();
+select lives_ok($$select public.increment_view((select id from vn_posts where label='live'),'guest-a')$$,'anonymous first view');
+select lives_ok($$select public.increment_view((select id from vn_posts where label='live'),'guest-a')$$,'anonymous repeated view');
+select is((select view_count from public.posts where id=(select id from vn_posts where label='live')),1,'same viewer once per day');
+select lives_ok($$select public.increment_view((select id from vn_posts where label='live'),'guest-b')$$,'different viewer');
+select is((select view_count from public.posts where id=(select id from vn_posts where label='live')),2,'different viewer increments');
+select is((select updated_at from public.posts where id=(select id from vn_posts where label='live')),'2000-01-01'::timestamptz,'view does not edit updated_at');
+select throws_ok($$insert into public.post_views(post_id,viewer_key,viewed_on) select id,'forged',current_date from vn_posts where label='live'$$,'42501',null,'anonymous direct view insert denied');
+select throws_ok($$select * from public.post_views$$,'42501',null,'view identities private');
+reset role;
+update public.post_views set viewed_on=current_date-1 where viewer_key='guest-a';
+select tests.logout();
+select lives_ok($$select public.increment_view((select id from vn_posts where label='live'),'guest-a')$$,'new day may count again');
+select is((select view_count from public.posts where id=(select id from vn_posts where label='live')),3,'new date increments');
+select throws_ok($$select public.increment_view((select id from vn_posts where label='live'),null)$$,'22023',null,'missing anonymous identity rejected');
+select throws_ok($$select public.increment_view((select id from vn_posts where label='live'),' ')$$,'22023',null,'blank anonymous identity rejected');
+select lives_ok($$select public.increment_view((select id from vn_posts where label='deleted'),'guest-a')$$,'deleted post view ignored');
+select lives_ok($$select public.increment_view(-1,'guest-a')$$,'missing post view ignored');
+reset role;
+select is((select view_count from public.posts where id=(select id from vn_posts where label='deleted')),0,'deleted post unchanged');
+select is((select count(*) from public.post_views where post_id=(select id from vn_posts where label='deleted')),0::bigint,'deleted post has no view record');
+select tests.login_as((select id from vn_users where label='B'));
+select public.increment_view((select id from vn_posts where label='live'),'forged-a');
+select public.increment_view((select id from vn_posts where label='live'),'forged-b');
+select public.increment_view((select id from vn_posts where label='live'),null);
+select is((select view_count from public.posts where id=(select id from vn_posts where label='live')),4,'authenticated identity cannot vary with argument');
+select throws_ok($$insert into public.post_views(post_id,viewer_key,viewed_on) select id,'forged',current_date from vn_posts where label='live'$$,'42501',null,'authenticated direct view insert denied');
+select throws_ok($$update public.posts set view_count=999$$,'42501',null,'direct counter update denied');
+reset role;
+select is((select viewer_key from public.post_views where viewer_key=(select id::text from vn_users where label='B')),(select id::text from vn_users where label='B'),'authenticated viewer key is auth uid');
+
+select tests.login_as((select id from vn_users where label='B'));
+with c as (insert into public.comments(post_id,author_id,body) select id,auth.uid(),'B 댓글' from vn_posts where label='live' returning id)
+insert into vn_comments select 'B',id from c;
+select tests.login_as((select id from vn_users where label='A'));
+select is((select count(*) from public.notifications),1::bigint,'B comments: A receives one notification');
+select ok((select kind='comment' and actor_id=(select id from vn_users where label='B') and comment_id=(select id from vn_comments where label='B') and read_at is null from public.notifications),'comment notification payload');
+select tests.login_as((select id from vn_users where label='C'));
+insert into public.comments(post_id,author_id,parent_id,body) select p.id,auth.uid(),c.id,'C 답글' from vn_posts p,vn_comments c where p.label='live' and c.label='B';
+select tests.login_as((select id from vn_users where label='A'));
+select is((select count(*) from public.notifications where kind='comment'),2::bigint,'C replies: A receives comment');
+select is((select count(*) from public.notifications where user_id=(select id from vn_users where label='B')),0::bigint,'A cannot read B notifications');
+select tests.login_as((select id from vn_users where label='B'));
+select is((select count(*) from public.notifications where kind='reply' and actor_id=(select id from vn_users where label='C')),1::bigint,'C replies: B receives reply');
+insert into public.comments(post_id,author_id,parent_id,body) select p.id,auth.uid(),c.id,'B 자기 답글' from vn_posts p,vn_comments c where p.label='live' and c.label='B';
+select is((select count(*) from public.notifications),1::bigint,'B self reply adds no B notification');
+select tests.login_as((select id from vn_users where label='A'));
+select is((select count(*) from public.notifications),3::bigint,'B self reply only notifies A');
+with c as (insert into public.comments(post_id,author_id,body) select id,auth.uid(),'A 자기 댓글' from vn_posts where label='live' returning id)
+insert into vn_comments select 'A',id from c;
+select is((select count(*) from public.notifications),3::bigint,'A self comment adds no notification');
+select tests.login_as((select id from vn_users where label='C'));
+insert into public.comments(post_id,author_id,parent_id,body) select p.id,auth.uid(),c.id,'A에게 답글' from vn_posts p,vn_comments c where p.label='live' and c.label='A';
+select is((select count(*) from public.notifications),0::bigint,'actor C receives none');
+select tests.login_as((select id from vn_users where label='A'));
+select is((select count(*) from public.notifications),4::bigint,'same post and parent author receives only one');
+select throws_ok($$update public.notifications set read_at=now()$$,'42501',null,'direct read update denied');
+select throws_ok($$delete from public.notifications$$,'42501',null,'direct notification delete denied');
+select lives_ok($$select public.mark_notifications_read()$$,'mark own notifications read');
+select is((select count(*) from public.notifications where read_at is null),0::bigint,'A has no unread notifications');
+select is((select count(*) from public.notifications where read_at is not null),4::bigint,'read notifications retained');
+select lives_ok($$select public.mark_notifications_read()$$,'mark read idempotent');
+select tests.login_as((select id from vn_users where label='B'));
+select is((select count(*) from public.notifications where read_at is null),1::bigint,'A read RPC does not mark B read');
+select public.soft_delete_comment((select id from vn_comments where label='B'));
+select is((select count(*) from public.notifications),1::bigint,'soft deletion does not generate notifications');
+select tests.logout();
+select throws_ok($$select public.mark_notifications_read()$$,'42501',null,'anonymous read RPC denied');
+select throws_ok($$select * from public.notifications$$,'42501',null,'anonymous notifications denied');
+select * from finish();
+rollback;
