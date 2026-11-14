@@ -8,15 +8,15 @@ insert into public.posts(board_id,author_id,kind,title,body) select 1,a,'text','
 create temporary table comment_posts as select id,title from public.posts where author_id=(select a from users_test);
 grant select on comment_posts to anon,authenticated;
 select tests.login_as((select a from users_test));
-select lives_ok($$insert into public.comments(post_id,author_id,body) select min(id),(select a from users_test),'부모' from public.posts$$,'댓글 작성');
+select lives_ok($$insert into public.comments(post_id,author_id,body) select min(id),(select a from users_test),'부모' from comment_posts$$,'댓글 작성');
 select is((select comment_count from public.posts where title='댓글 글'),1,'댓글 카운트');
 select lives_ok($$insert into public.comments(post_id,author_id,parent_id,body) select post_id,(select a from users_test),id,'답글' from public.comments where body='부모'$$,'답글 작성');
 select is((select comment_count from public.posts where title='댓글 글'),2,'답글 카운트');
 select throws_ok($$insert into public.comments(post_id,author_id,parent_id,body) select post_id,(select a from users_test),id,'삼단계' from public.comments where body='답글'$$,'23514',null,'답글의 답글 거부');
 select throws_ok($$insert into public.comments(post_id,author_id,parent_id,body) select (select id from public.posts where title='다른 글'),(select a from users_test),id,'잘못된 부모' from public.comments where body='부모'$$,'23514',null,'다른 글 부모 거부');
-select throws_ok($$insert into public.comments(post_id,author_id,body) select min(id),(select a from users_test),'' from public.posts$$,'23514',null,'빈 댓글 거부');
-select throws_ok($$insert into public.comments(post_id,author_id,body) select min(id),(select a from users_test),repeat('가',2001) from public.posts$$,'23514',null,'댓글 길이 제한');
-select throws_ok($$insert into public.comments(post_id,author_id,body) select min(id),(select b from users_test),'위조' from public.posts$$,'42501',null,'댓글 작성자 위조 거부');
+select throws_ok($$insert into public.comments(post_id,author_id,body) select min(id),(select a from users_test),'' from comment_posts$$,'23514',null,'빈 댓글 거부');
+select throws_ok($$insert into public.comments(post_id,author_id,body) select min(id),(select a from users_test),repeat('가',2001) from comment_posts$$,'23514',null,'댓글 길이 제한');
+select throws_ok($$insert into public.comments(post_id,author_id,body) select min(id),(select b from users_test),'위조' from comment_posts$$,'42501',null,'댓글 작성자 위조 거부');
 select tests.login_as((select b from users_test));
 select throws_ok($$select public.soft_delete_comment((select id from public.comments where body='부모'))$$,'42501',null,'남의 댓글 삭제 거부');
 select tests.login_as((select a from users_test));
@@ -29,6 +29,6 @@ select throws_ok($$update public.posts set comment_count=999$$,'42501',null,'카
 select public.soft_delete_post((select id from public.posts where title='다른 글'));
 select throws_ok($$insert into public.comments(post_id,author_id,body) select id,(select a from users_test),'삭제 글 댓글' from comment_posts where title='다른 글'$$,'23514',null,'삭제 글 댓글 거부');
 select tests.logout();
-select throws_ok($$insert into public.comments(post_id,author_id,body) select min(id),(select a from users_test),'비회원' from public.posts$$,'42501',null,'비회원 댓글 거부');
+select throws_ok($$insert into public.comments(post_id,author_id,body) select min(id),(select a from users_test),'비회원' from comment_posts$$,'42501',null,'비회원 댓글 거부');
 select * from finish();
 rollback;

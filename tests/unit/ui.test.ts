@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { timeAgo } from "../../src/lib/ui";
+import { likeChipTone, timeAgo } from "../../src/lib/ui";
+
+describe("likeChipTone", () => {
+  it.each([
+    [4, false, 5, "gray"],
+    [7, false, 10, "orange"],
+    [4, false, 10, "gray"],
+    [1, true, 5, "red"],
+  ] as const)("returns %s/%s/%s as %s", (count, isBest, threshold, expected) => {
+    expect(likeChipTone(count, isBest, threshold)).toBe(expected);
+  });
+});
 
 describe("timeAgo", () => {
   const now = new Date("2026-11-14T12:00:00Z");

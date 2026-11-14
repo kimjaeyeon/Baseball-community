@@ -44,3 +44,29 @@ export async function deleteComment(id: number) {
   if (error) return { error: "댓글을 삭제하지 못했습니다. 다시 시도해 주세요" };
   revalidateComments();
 }
+
+async function currentLikeState(supabase: Awaited<ReturnType<typeof createClient>>, postId: number, userId: string) {
+  const [{ data: like, error: likeError }, { data: post, error: postError }] = await Promise.all([
+    supabase.from("post_likes").select("post_id").eq("post_id", postId).eq("user_id", userId).maybeSingle(),
+    supabase.from("posts").select("like_count").eq("id", postId).maybeSingle(),
+  ]);
+  if (likeError || postError || !post) return null;
+  return { liked: Boolean(like), count: post.like_count };
+}
+
+export async function toggleLike(postId: number): Promise<{ liked: boolean; count: number } | { error: string }> {
+  if (!validId(postId)) return { error: "글 정보가 올바르지 않습니다" };
+  const { supabase, user } = await authenticatedClient();
+  const current = await currentLikeState(supabase, postId, user.id);
+  if (!current) return { error: "추천 상태를 불러오지 못했습니다. 다시 시도해 주세요" };
+
+  const { error } = current.liked
+    ? await supabase.from("post_likes").delete().eq("post_id", postId).eq("user_id", user.id)
+    : await supabase.from("post_likes").insert({ post_id: postId, user_id: user.id });
+  if (error && error.code !== "23505") return { error: "추천을 처리하지 못했습니다. 다시 시도해 주세요" };
+
+  const refreshed = await currentLikeState(supabase, postId, user.id);
+  if (!refreshed) return { error: "추천 상태를 불러오지 못했습니다. 다시 시도해 주세요" };
+  revalidateComments();
+  return refreshed;
+}

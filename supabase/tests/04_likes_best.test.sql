@@ -1,0 +1,47 @@
+begin;
+\ir _helpers.sql
+select plan(24);
+create temporary table like_users(label text,id uuid);
+insert into like_users select n::text,tests.create_user('추천팬' || n) from generate_series(0,5) n;
+create temporary table like_posts(id bigint,label text);
+with p as (insert into public.posts(board_id,author_id,kind,title,body) select 1,id,'text','추천 글','본문' from like_users where label='0' returning id)
+insert into like_posts select id,'live' from p;
+with p as (insert into public.posts(board_id,author_id,kind,title,body,deleted_at) select 1,id,'text','삭제 글','본문',now() from like_users where label='0' returning id)
+insert into like_posts select id,'deleted' from p;
+grant select on like_users,like_posts to anon,authenticated;
+select tests.login_as((select id from like_users where label='0'));
+select throws_ok($$insert into public.post_likes(post_id,user_id) select p.id,u.id from like_posts p,like_users u where p.label='live' and u.label='0'$$,'23514',null,'본인 추천 거부');
+select tests.login_as((select id from like_users where label='1'));
+select lives_ok($$insert into public.post_likes(post_id,user_id) select p.id,u.id from like_posts p,like_users u where p.label='live' and u.label='1'$$,'다른 회원 추천');
+select throws_ok($$insert into public.post_likes(post_id,user_id) select p.id,u.id from like_posts p,like_users u where p.label='live' and u.label='1'$$,'23505',null,'중복 추천 거부');
+select throws_ok($$insert into public.post_likes(post_id,user_id) select p.id,u.id from like_posts p,like_users u where p.label='live' and u.label='2'$$,'42501',null,'추천자 위조 거부');
+reset role;
+insert into public.post_likes(post_id,user_id) select p.id,u.id from like_posts p,like_users u where p.label='live' and u.label in ('2','3','4');
+select is((select like_count from public.posts where id=(select id from like_posts where label='live')),4,'네 명 카운트');
+select is((select is_best from public.posts where id=(select id from like_posts where label='live')),false,'네 명은 베스트 아님');
+select tests.login_as((select id from like_users where label='5'));
+select lives_ok($$insert into public.post_likes(post_id,user_id) select p.id,u.id from like_posts p,like_users u where p.label='live' and u.label='5'$$,'다섯 번째 추천');
+select is((select like_count from public.posts where id=(select id from like_posts where label='live')),5,'다섯 명 카운트');
+select is((select is_best from public.posts where id=(select id from like_posts where label='live')),true,'다섯 명 베스트 승격');
+select ok((select best_at is not null from public.posts where id=(select id from like_posts where label='live')),'승격 시각 저장');
+create temporary table promotion_time as select best_at from public.posts where id=(select id from like_posts where label='live');
+select is((select count(*) from public.notifications),0::bigint,'남의 알림 읽기 불가');
+select tests.login_as((select id from like_users where label='0'));
+select is((select count(*) from public.notifications where kind='best' and post_id=(select id from like_posts where label='live')),1::bigint,'글쓴이 베스트 알림 한 개');
+select ok((select actor_id is null and comment_id is null and read_at is null from public.notifications where post_id=(select id from like_posts where label='live')),'best 알림 필드');
+select throws_ok($$update public.posts set is_best=false$$,'42501',null,'베스트 직접 변경 금지');
+select throws_ok($$insert into public.notifications(user_id,kind,post_id) select u.id,'best',p.id from like_users u,like_posts p where u.label='0' and p.label='live'$$,'42501',null,'클라이언트 알림 생성 금지');
+select tests.login_as((select id from like_users where label='5'));
+select lives_ok($$delete from public.post_likes where post_id=(select id from like_posts where label='live') and user_id=auth.uid()$$,'추천 취소');
+select is((select like_count from public.posts where id=(select id from like_posts where label='live')),4,'취소 카운트 감소');
+select is((select is_best from public.posts where id=(select id from like_posts where label='live')),true,'취소해도 베스트 유지');
+select lives_ok($$insert into public.post_likes(post_id,user_id) select id,auth.uid() from like_posts where label='live'$$,'다시 다섯 추천');
+select is((select best_at from public.posts where id=(select id from like_posts where label='live')),(select best_at from promotion_time),'승격 시각 유지');
+select throws_ok($$insert into public.post_likes(post_id,user_id) select id,auth.uid() from like_posts where label='deleted'$$,'23514',null,'삭제 글 추천 금지');
+with changed as (delete from public.post_likes where user_id=(select id from like_users where label='1') returning *) select is((select count(*) from changed),0::bigint,'남의 추천 취소 금지');
+select tests.login_as((select id from like_users where label='0'));
+select is((select count(*) from public.notifications where post_id=(select id from like_posts where label='live')),1::bigint,'재승격 알림 추가 없음');
+select tests.logout();
+select throws_ok($$insert into public.post_likes(post_id,user_id) select p.id,u.id from like_posts p,like_users u where p.label='live' and u.label='1'$$,'42501',null,'비회원 추천 금지');
+select * from finish();
+rollback;

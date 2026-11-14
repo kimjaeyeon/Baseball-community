@@ -1,3 +1,8 @@
+export function likeChipTone(count: number, isBest: boolean, threshold = 5): "gray" | "orange" | "red" {
+  if (isBest) return "red";
+  return count >= 5 && count < threshold ? "orange" : "gray";
+}
+
 export function timeAgo(iso: string, now: Date = new Date()): string {
   const date = new Date(iso);
   const seconds = Math.max(0, (now.getTime() - date.getTime()) / 1000);
