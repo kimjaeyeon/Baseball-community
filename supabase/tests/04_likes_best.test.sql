@@ -1,6 +1,6 @@
 begin;
 \ir _helpers.sql
-select plan(24);
+select plan(26);
 create temporary table like_users(label text,id uuid);
 insert into like_users select n::text,tests.create_user('추천팬' || n) from generate_series(0,5) n;
 create temporary table like_posts(id bigint,label text);
@@ -9,10 +9,16 @@ insert into like_posts select id,'live' from p;
 with p as (insert into public.posts(board_id,author_id,kind,title,body,deleted_at) select 1,id,'text','삭제 글','본문',now() from like_users where label='0' returning id)
 insert into like_posts select id,'deleted' from p;
 grant select on like_users,like_posts to anon,authenticated;
+-- The old trigger also touches updated_at on this setup UPDATE, so disable it
+-- only while establishing a historical timestamp (now() is transaction-stable).
+alter table public.posts disable trigger posts_touch_updated_at;
+update public.posts set updated_at = '2000-01-01' where id=(select id from like_posts where label='live');
+alter table public.posts enable trigger posts_touch_updated_at;
 select tests.login_as((select id from like_users where label='0'));
 select throws_ok($$insert into public.post_likes(post_id,user_id) select p.id,u.id from like_posts p,like_users u where p.label='live' and u.label='0'$$,'23514',null,'본인 추천 거부');
 select tests.login_as((select id from like_users where label='1'));
 select lives_ok($$insert into public.post_likes(post_id,user_id) select p.id,u.id from like_posts p,like_users u where p.label='live' and u.label='1'$$,'다른 회원 추천');
+select is((select updated_at from public.posts where id=(select id from like_posts where label='live')), '2000-01-01'::timestamptz, '추천은 updated_at을 유지');
 select throws_ok($$insert into public.post_likes(post_id,user_id) select p.id,u.id from like_posts p,like_users u where p.label='live' and u.label='1'$$,'23505',null,'중복 추천 거부');
 select throws_ok($$insert into public.post_likes(post_id,user_id) select p.id,u.id from like_posts p,like_users u where p.label='live' and u.label='2'$$,'42501',null,'추천자 위조 거부');
 reset role;
@@ -27,6 +33,8 @@ select ok((select best_at is not null from public.posts where id=(select id from
 create temporary table promotion_time as select best_at from public.posts where id=(select id from like_posts where label='live');
 select is((select count(*) from public.notifications),0::bigint,'남의 알림 읽기 불가');
 select tests.login_as((select id from like_users where label='0'));
+update public.posts set title='수정한 제목' where id=(select id from like_posts where label='live');
+select isnt((select updated_at from public.posts where id=(select id from like_posts where label='live')), '2000-01-01'::timestamptz, '제목 수정은 updated_at을 갱신');
 select is((select count(*) from public.notifications where kind='best' and post_id=(select id from like_posts where label='live')),1::bigint,'글쓴이 베스트 알림 한 개');
 select ok((select actor_id is null and comment_id is null and read_at is null from public.notifications where post_id=(select id from like_posts where label='live')),'best 알림 필드');
 select throws_ok($$update public.posts set is_best=false$$,'42501',null,'베스트 직접 변경 금지');
