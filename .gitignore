@@ -25,6 +25,7 @@ next-env.d.ts
 .omc/
 .omx/
 .superpowers/
+.playwright-mcp/
 supabase/.temp/
 .vercel/
 
