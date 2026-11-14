@@ -1,9 +1,16 @@
+"use client";
+
 import Link from "next/link";
+import Image from "next/image";
+import { useSyncExternalStore } from "react";
+import { imageUrl } from "@/lib/images";
+import { readPost, subscribeReadPosts } from "@/lib/read-posts";
 import type { PostListItem } from "@/lib/posts";
 import { timeAgo } from "@/lib/ui";
 import { likeChipTone } from "@/lib/ui";
 
 export default function PostRow({ post }: { post: PostListItem }) {
+  const read = useSyncExternalStore(subscribeReadPosts, () => readPost(post.id), () => false);
   let domain = "링크";
   if (post.kind === "link" && post.url) {
     try { domain = new URL(post.url).hostname; } catch { /* DB permits http(s) prefixes only. */ }
@@ -13,11 +20,11 @@ export default function PostRow({ post }: { post: PostListItem }) {
   const likeColor = tone === "red" ? "text-red-700" : tone === "orange" ? "text-orange-700" : "text-zinc-500";
   return <li className="border-b py-4">
     <Link href={`/${post.board.slug}/${post.id}`} className="flex gap-3">
-      <span className={`flex h-16 w-16 shrink-0 flex-col items-center justify-center overflow-hidden rounded p-1 text-center text-xs ${color}`}>
-        {post.kind === "link" ? <><span aria-hidden>↗</span><span className="w-full truncate">{domain}</span></> : post.board.name}
+      <span className={`flex h-16 w-16 shrink-0 flex-col items-center justify-center overflow-hidden rounded text-center text-xs ${color}`}>
+        {post.kind === "link" ? <><span aria-hidden>↗</span><span className="w-full truncate px-1">{domain}</span></> : post.thumb_path ? <Image src={imageUrl(post.thumb_path)} alt="" width={64} height={64} unoptimized className="h-16 w-16 object-cover" /> : post.board.name}
       </span>
       <span className="min-w-0 flex-1">
-        <span className="flex gap-2"><span className="line-clamp-2 font-semibold">{post.is_best && "🔥 "}{post.title}</span>{post.comment_count > 0 && <span>[{post.comment_count}]</span>}</span>
+        <span className="flex gap-2"><span className={`line-clamp-2 font-semibold ${read ? "text-zinc-400" : ""}`}>{post.is_best && "🔥 "}{post.title}</span>{post.comment_count > 0 && <span className="shrink-0">[{post.comment_count}]</span>}</span>
         <span className="mt-2 block text-xs text-zinc-500"><span className={likeColor}>▲{post.like_count}</span> · 조회 {post.view_count.toLocaleString("ko-KR")} · {post.board.name} · {timeAgo(post.created_at)} · {post.author.nickname}</span>
       </span>
     </Link>

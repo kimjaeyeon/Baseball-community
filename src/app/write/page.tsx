@@ -13,5 +13,9 @@ export default async function WritePage({ searchParams }: PageProps<"/write">) {
   if (edit !== undefined && (!post || post.author_id !== data.user.id)) notFound();
   const { data: boards, error } = await supabase.from("boards").select("slug,name").order("sort");
   if (error) throw new Error("게시판을 불러오지 못했습니다", { cause: error });
-  return <section className="mx-auto max-w-2xl"><h1 className="text-2xl font-bold">{post ? "글 수정" : "글쓰기"}</h1><PostForm boards={boards} post={post} initialBoard={typeof board === "string" ? board : undefined} /></section>;
+  const { data: images, error: imagesError } = post
+    ? await supabase.from("post_images").select("path,thumb_path").eq("post_id", post.id).order("position")
+    : { data: [], error: null };
+  if (imagesError) throw new Error("사진을 불러오지 못했습니다", { cause: imagesError });
+  return <section className="mx-auto max-w-2xl"><h1 className="text-2xl font-bold">{post ? "글 수정" : "글쓰기"}</h1><PostForm key={post?.id ?? "new"} boards={boards} post={post} initialImages={images ?? []} initialBoard={typeof board === "string" ? board : undefined} /></section>;
 }

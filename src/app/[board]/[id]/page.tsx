@@ -1,4 +1,7 @@
 import Link from "next/link";
+import Image from "next/image";
+import ReadPost from "@/components/ReadPost";
+import { imageUrl } from "@/lib/images";
 import { notFound } from "next/navigation";
 import { getPost } from "@/lib/posts";
 import { createClient } from "@/lib/supabase/server";
@@ -16,6 +19,8 @@ export default async function PostPage({ params }: PageProps<"/[board]/[id]">) {
   if (!post || post.board.slug !== board) notFound();
   const supabase = await createClient();
   const { data } = await supabase.auth.getUser();
+  const { data: images, error: imagesError } = await supabase.from("post_images").select("id,path").eq("post_id", post.id).order("position");
+  if (imagesError) throw new Error("사진을 불러오지 못했습니다", { cause: imagesError });
   const { data: like, error: likeError } = data.user
     ? await supabase.from("post_likes").select("post_id").eq("post_id", post.id).eq("user_id", data.user.id).maybeSingle()
     : { data: null, error: null };
@@ -29,11 +34,13 @@ export default async function PostPage({ params }: PageProps<"/[board]/[id]">) {
   if (commentsError) throw new Error("댓글을 불러오지 못했습니다", { cause: commentsError });
   const comments = prepareComments(commentRows as unknown as CommentItem[]);
   return <article>
+    <ReadPost id={post.id} />
     <Link className="text-sm underline" href={`/${board}`}>{post.board.name} 목록</Link>
     <h1 className="mt-4 break-words text-2xl font-bold">{post.is_best && "🔥 "}{post.title}</h1>
     <p className="my-4 text-sm text-zinc-500">{post.author.nickname} · 조회 {post.view_count.toLocaleString("ko-KR")} · {timeAgo(post.created_at)}</p>
     {post.kind === "link" && <div className="my-6 rounded border p-5"><p className="mb-2 break-all">{post.url && (() => { try { return new URL(post.url).hostname; } catch { return post.url; } })()}</p><a className="text-blue-700 underline" href={post.url!} target="_blank" rel="noopener noreferrer nofollow">원문 보기 ↗</a></div>}
     <Markdown>{post.body ?? ""}</Markdown>
+    {post.kind === "text" && <div className="my-6 flex flex-col items-start gap-4">{images?.map((image, index) => <Image key={image.id} src={imageUrl(image.path)} alt={`첨부 사진 ${index + 1}`} width={1600} height={1600} unoptimized className="h-auto max-w-full rounded" />)}</div>}
     <div className="my-8 border-y py-4"><LikeButton key={`${Boolean(like)}:${post.like_count}:${post.is_best}`} postId={post.id} initialLiked={Boolean(like)} initialCount={post.like_count} isBest={post.is_best} disabled={data.user?.id === post.author_id} /></div>
     <Comments comments={comments} postId={post.id} userId={data.user?.id ?? null} />
     {data.user?.id === post.author_id && <div className="mt-8 flex gap-5 border-t pt-4"><Link href={`/write?edit=${post.id}`} className="underline">수정</Link><DeletePostButton id={post.id} /></div>}
