@@ -41,3 +41,50 @@ it("does not silently ignore a failed view RPC", async () => {
   rpc.mockResolvedValue({ error: { message: "offline" } });
   await expect(PostPage({ params: Promise.resolve({ board: "kbo", id: "7" }) } as never)).rejects.toThrow();
 });
+
+it.each(["post", "comment"])("shows the current %s report even after more than 1000 unrelated reports", async (targetType) => {
+  getUser.mockResolvedValue({ data: { user: { id: "reader" } }, error: null });
+  const fallback = from.getMockImplementation()!;
+  from.mockImplementation((table: string) => {
+    if (table === "comments" && targetType === "comment") {
+      const query = {
+        select: () => query, eq: () => query, order: () => query,
+        then: (resolve: (result: unknown) => unknown) => Promise.resolve(resolve({ data: [{
+          id: 7, author_id: "a", parent_id: null, body: "댓글", created_at: "2026-11-14T01:00:00Z",
+          deleted_at: null, author: { nickname: "작성자" },
+        }], error: null })),
+      };
+      return query;
+    }
+    if (table !== "reports") return fallback(table);
+    let rows = [
+      ...Array.from({ length: 1000 }, (_, i) => ({ target_type: "post", target_id: i + 100 })),
+      { target_type: targetType, target_id: 7 },
+    ];
+    const query = {
+      select: () => query,
+      eq: (key: string, value: unknown) => { rows = rows.filter((r) => r[key as keyof typeof r] === value); return query; },
+      in: (key: string, values: unknown[]) => { rows = rows.filter((r) => values.includes(r[key as keyof typeof r])); return query; },
+      maybeSingle: async () => ({ data: rows[0] ?? null, error: null }),
+      then: (resolve: (result: unknown) => unknown) => Promise.resolve(resolve({ data: rows.slice(0, 1000), error: null })),
+    };
+    return query;
+  });
+  const html = renderToStaticMarkup(await PostPage({ params: Promise.resolve({ board: "kbo", id: "7" }) } as never));
+  expect(html).toContain("🚩 신고됨");
+});
+
+it("does not display an unreported state when report loading fails", async () => {
+  getUser.mockResolvedValue({ data: { user: { id: "reader" } }, error: null });
+  const fallback = from.getMockImplementation()!;
+  from.mockImplementation((table: string) => {
+    if (table !== "reports") return fallback(table);
+    const query = {
+      select: () => query, eq: () => query, in: () => query,
+      maybeSingle: async () => ({ data: null, error: { message: "offline" } }),
+      then: (resolve: (result: unknown) => unknown) => Promise.resolve(resolve({ data: null, error: { message: "offline" } })),
+    };
+    return query;
+  });
+  await expect(PostPage({ params: Promise.resolve({ board: "kbo", id: "7" }) } as never)).rejects.toThrow("신고 상태를 불러오지 못했습니다");
+});

@@ -41,12 +41,23 @@ export default async function PostPage({ params }: PageProps<"/[board]/[id]">) {
     .order("id", { ascending: true });
   if (commentsError) throw new Error("댓글을 불러오지 못했습니다", { cause: commentsError });
   const comments = prepareComments(commentRows as unknown as CommentItem[]);
-  // RLS가 본인 신고만 돌려준다.
-  const { data: myReports } = data.user
-    ? await supabase.from("reports").select("target_type,target_id")
-    : { data: [] as { target_type: string; target_id: number }[] };
-  const reportedPost = (myReports ?? []).some((r) => r.target_type === "post" && r.target_id === post.id);
-  const reportedCommentIds = (myReports ?? []).filter((r) => r.target_type === "comment").map((r) => r.target_id);
+  // RLS로 본인 신고만 조회하되, 전체 이력이 API 행 제한에 잘리지 않도록 현재 대상만 읽는다.
+  let reportedPost = false;
+  const reportedCommentIds: number[] = [];
+  if (data.user) {
+    const { data: report, error } = await supabase.from("reports").select("target_id")
+      .eq("target_type", "post").eq("target_id", post.id).maybeSingle();
+    if (error) throw new Error("신고 상태를 불러오지 못했습니다", { cause: error });
+    reportedPost = Boolean(report);
+    // IN URL 길이와 응답 행 수를 제한한다. 대상별 본인 신고는 UNIQUE이므로 누락이 없다.
+    for (let offset = 0; offset < comments.length; offset += 100) {
+      const ids = comments.slice(offset, offset + 100).map((comment) => comment.id);
+      const { data: reports, error: reportsError } = await supabase.from("reports").select("target_id")
+        .eq("target_type", "comment").in("target_id", ids);
+      if (reportsError) throw new Error("신고 상태를 불러오지 못했습니다", { cause: reportsError });
+      reportedCommentIds.push(...(reports ?? []).map((report) => report.target_id));
+    }
+  }
   return <article>
     <ReadPost id={post.id} />
     <Link className="text-sm underline" href={`/${board}`}>{post.board.name} 목록</Link>
