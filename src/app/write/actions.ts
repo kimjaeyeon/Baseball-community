@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getBoard, getPost } from "@/lib/posts";
 import { validatePost } from "@/lib/validate";
+import { friendlyDbError } from "@/lib/db-errors";
 import type { UploadedImage } from "@/lib/images";
 
 async function authenticatedClient() {
@@ -67,7 +68,7 @@ export async function createPost(formData: FormData, images: UploadedImage[] = [
     p_id: null, p_board_id: board.id, p_kind: input.kind, p_title: input.title, p_body: input.body,
     p_url: input.kind === "link" ? input.url : null, p_images: images, p_representative: representativeIndex,
   });
-  if (error) return { error: "글을 저장하지 못했습니다. 다시 시도해 주세요" };
+  if (error) return { error: friendlyDbError(error, "글을 저장하지 못했습니다. 다시 시도해 주세요") };
   revalidatePost(data, board.slug);
   redirect(`/${board.slug}/${data}`);
 }

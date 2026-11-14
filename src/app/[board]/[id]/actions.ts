@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { REPORT_REASONS, friendlyDbError } from "@/lib/db-errors";
 
 async function authenticatedClient() {
   const supabase = await createClient();
@@ -33,8 +34,24 @@ export async function addComment(postId: number, parentId: number | null, formDa
     author_id: user.id,
     body,
   });
-  if (error) return { error: "댓글을 등록하지 못했습니다. 다시 시도해 주세요" };
+  if (error) return { error: friendlyDbError(error, "댓글을 등록하지 못했습니다. 다시 시도해 주세요") };
   revalidateComments();
+}
+
+export async function reportTarget(
+  targetType: "post" | "comment", targetId: number, reason: string,
+): Promise<{ reported: true } | { error: string }> {
+  if ((targetType !== "post" && targetType !== "comment") || !validId(targetId)) {
+    return { error: "신고 대상이 올바르지 않습니다" };
+  }
+  if (!(REPORT_REASONS as readonly string[]).includes(reason)) return { error: "신고 사유를 선택해 주세요" };
+  const { supabase, user } = await authenticatedClient();
+  const { error } = await supabase.from("reports").insert({
+    target_type: targetType, target_id: targetId, reporter_id: user.id, reason,
+  });
+  if (!error || error.code === "23505") return { reported: true };
+  if (error.code === "23503") return { error: "삭제되었거나 없는 대상입니다" };
+  return { error: "신고하지 못했습니다. 다시 시도해 주세요" };
 }
 
 export async function deleteComment(id: number) {

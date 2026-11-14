@@ -33,3 +33,7 @@ supabase/.temp/
 .DS_Store
 *.pem
 *.log
+
+# playwright
+/test-results/
+/playwright-report/

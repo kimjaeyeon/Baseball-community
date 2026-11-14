@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "test:db": "supabase test db supabase/tests/01_profiles.test.sql supabase/tests/02_posts.test.sql supabase/tests/03_comments.test.sql supabase/tests/04_likes_best.test.sql supabase/tests/05_images.test.sql supabase/tests/06_views_notify.test.sql",
+    "test:db": "supabase test db supabase/tests/01_profiles.test.sql supabase/tests/02_posts.test.sql supabase/tests/03_comments.test.sql supabase/tests/04_likes_best.test.sql supabase/tests/05_images.test.sql supabase/tests/06_views_notify.test.sql supabase/tests/07_reports_ratelimit.test.sql",
     "e2e": "playwright test"
   },
   "dependencies": {
